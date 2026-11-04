@@ -22,7 +22,7 @@ GhostCraft — свой лаунчер Minecraft Java для Android (Poco X5 Pr
 - Экран «Настройки» (шестерёнка на главной): ник (`nick`) и масштаб рендера (`render_scale`, по умолчанию 0.67) — объект `Settings` в `Screens.kt`.
 - Этап 3 начат (2026-11-04): инстансы любой версии 1.13+ (Vanilla/Fabric/Quilt/NeoForge/Forge) и сборки Modrinth создаются на телефоне — см. ROADMAP.
 - `maven.neoforged.net` у провайдера пользователя заблокирован — NeoForge ставится только с VPN; обходов не делаем (решение пользователя).
-- Git-репозитория пока нет; коммиты — только по просьбе.
+- Репозиторий: github.com/Full-Time-Krist/GhostCraft (публичный); коммиты и push — только по просьбе.
 
 ## Раскладка
 
