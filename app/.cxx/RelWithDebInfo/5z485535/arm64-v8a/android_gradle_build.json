@@ -1,0 +1,45 @@
+{
+  "buildFiles": [
+    "/home/Krist/Projects/GhostCraft/app/src/main/cpp/CMakeLists.txt"
+  ],
+  "cleanCommandsComponents": [
+    [
+      "/home/Krist/.local/opt/android-sdk/cmake/3.31.6/bin/ninja",
+      "-C",
+      "/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a",
+      "clean"
+    ]
+  ],
+  "buildTargetsCommandComponents": [
+    "/home/Krist/.local/opt/android-sdk/cmake/3.31.6/bin/ninja",
+    "-C",
+    "/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a",
+    "{LIST_OF_TARGETS_TO_BUILD}"
+  ],
+  "libraries": {
+    "ghostcraft::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "ghostcraft",
+      "output": "/home/Krist/Projects/GhostCraft/app/build/intermediates/cxx/RelWithDebInfo/5z485535/obj/arm64-v8a/libghostcraft.so",
+      "runtimeFiles": []
+    },
+    "glfw::@6890427a1f51a3e7e1df": {
+      "toolchain": "toolchain",
+      "abi": "arm64-v8a",
+      "artifactName": "glfw",
+      "output": "/home/Krist/Projects/GhostCraft/app/build/intermediates/cxx/RelWithDebInfo/5z485535/obj/arm64-v8a/libglfw.so",
+      "runtimeFiles": []
+    }
+  },
+  "toolchains": {
+    "toolchain": {
+      "cCompilerExecutable": "/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang.lld",
+      "cppCompilerExecutable": "/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang++.lld"
+    }
+  },
+  "cFileExtensions": [
+    "c"
+  ],
+  "cppFileExtensions": []
+}

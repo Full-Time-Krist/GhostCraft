@@ -1,0 +1,136 @@
+diff --git a/make/autoconf/flags-cflags.m4 b/make/autoconf/flags-cflags.m4
+index 9b022792e..c6a42cd0f 100644
+--- a/make/autoconf/flags-cflags.m4
++++ b/make/autoconf/flags-cflags.m4
+@@ -67,7 +67,11 @@ AC_DEFUN([FLAGS_SETUP_SHARED_LIBS],
+       SHARED_LIBRARY_FLAGS='-shared'
+       SET_EXECUTABLE_ORIGIN='-Wl,-rpath,\$$ORIGIN[$]1'
+       if test "x$OPENJDK_TARGET_OS" = xlinux; then
+-        SET_EXECUTABLE_ORIGIN="$SET_EXECUTABLE_ORIGIN -Wl,--disable-new-dtags"
++        # The Android linker ignores DT_RPATH and only honours DT_RUNPATH
++        case "$host_os" in
++          *android*) SET_EXECUTABLE_ORIGIN="$SET_EXECUTABLE_ORIGIN -Wl,--enable-new-dtags" ;;
++          *) SET_EXECUTABLE_ORIGIN="$SET_EXECUTABLE_ORIGIN -Wl,--disable-new-dtags" ;;
++        esac
+       fi
+       SET_SHARED_LIBRARY_NAME='-Wl,-soname=[$]1'
+       SET_SHARED_LIBRARY_MAPFILE='-Wl,-version-script=[$]1'
+diff --git a/make/autoconf/jdk-options.m4 b/make/autoconf/jdk-options.m4
+index a9863c501..28d9c0452 100644
+--- a/make/autoconf/jdk-options.m4
++++ b/make/autoconf/jdk-options.m4
+@@ -188,6 +188,10 @@ AC_DEFUN_ONCE([JDKOPT_SETUP_JDK_OPTIONS],
+   if test "x$OPENJDK_TARGET_CPU" = xs390x ; then
+     INCLUDE_SA=false
+   fi
++  # bionic has no procfs core structures; SA is a debugger nobody runs on a phone
++  case "$host_os" in
++    *android*) INCLUDE_SA=false ;;
++  esac
+   AC_SUBST(INCLUDE_SA)
+ 
+   # Setup default CDS alignment. On platforms where one build may run on machines with different
+diff --git a/src/hotspot/os/linux/os_linux.cpp b/src/hotspot/os/linux/os_linux.cpp
+index c6a996d69..64e076fd8 100644
+--- a/src/hotspot/os/linux/os_linux.cpp
++++ b/src/hotspot/os/linux/os_linux.cpp
+@@ -581,8 +581,8 @@ void os::init_system_properties_values() {
+ 
+ void os::Linux::libpthread_init() {
+   // Save glibc and pthread version strings.
+-#if !defined(_CS_GNU_LIBC_VERSION) || \
+-    !defined(_CS_GNU_LIBPTHREAD_VERSION)
++#if !defined(MUSL_LIBC) && !defined(__ANDROID__) && \
++    (!defined(_CS_GNU_LIBC_VERSION) || !defined(_CS_GNU_LIBPTHREAD_VERSION))
+   #error "glibc too old (< 2.3.2)"
+ #endif
+ 
+@@ -591,6 +591,10 @@ void os::Linux::libpthread_init() {
+   // _CS_GNU_LIBC_VERSION and _CS_GNU_LIBPTHREAD_VERSION
+   os::Linux::set_libc_version("musl - unknown");
+   os::Linux::set_libpthread_version("musl - unknown");
++#elif defined(__ANDROID__)
++  // bionic: pthread lives in libc, there is no version string
++  os::Linux::set_libc_version("bionic");
++  os::Linux::set_libpthread_version("bionic");
+ #else
+   size_t n = confstr(_CS_GNU_LIBC_VERSION, nullptr, 0);
+   assert(n > 0, "cannot retrieve glibc version");
+@@ -1892,10 +1896,12 @@ const char* os::Linux::dll_path(void* lib) {
+   const char* l_path = nullptr;
+   assert(lib != nullptr, "dll_path parameter must not be null");
+ 
++#ifndef __ANDROID__
+   int res_dli = ::dlinfo(lib, RTLD_DI_LINKMAP, &lmap);
+   if (res_dli == 0) {
+     l_path = lmap->l_name;
+   }
++#endif
+   return l_path;
+ }
+ 
+@@ -4485,6 +4491,13 @@ static void check_pax(void) {
+ void os::init(void) {
+   char dummy;   // used to get a guess on initial stack address
+ 
++#ifdef __ANDROID__
++  // Android tags malloc'ed pointers in the top byte, but aarch64 code embeds
++  // C-heap addresses (e.g. CompiledICHolder) as 48-bit immediates, dropping
++  // the tag; free() then aborts. Turn tagging off before the VM allocates.
++  mallopt(M_BIONIC_SET_HEAP_TAGGING_LEVEL, M_HEAP_TAGGING_LEVEL_NONE);
++#endif
++
+   clock_tics_per_sec = sysconf(_SC_CLK_TCK);
+   int sys_pg_size = sysconf(_SC_PAGESIZE);
+   if (sys_pg_size < 0) {
+diff --git a/src/hotspot/share/utilities/elfFile.hpp b/src/hotspot/share/utilities/elfFile.hpp
+index 579837ebf..c4149a260 100644
+--- a/src/hotspot/share/utilities/elfFile.hpp
++++ b/src/hotspot/share/utilities/elfFile.hpp
+@@ -46,7 +46,7 @@ typedef Elf64_Shdr      Elf_Shdr;
+ typedef Elf64_Phdr      Elf_Phdr;
+ typedef Elf64_Sym       Elf_Sym;
+ 
+-#if !defined(_ALLBSD_SOURCE) || defined(__APPLE__)
++#if (!defined(_ALLBSD_SOURCE) || defined(__APPLE__)) && !defined(ELF_ST_TYPE)
+ #define ELF_ST_TYPE ELF64_ST_TYPE
+ #endif
+ 
+@@ -62,7 +62,7 @@ typedef Elf32_Shdr      Elf_Shdr;
+ typedef Elf32_Phdr      Elf_Phdr;
+ typedef Elf32_Sym       Elf_Sym;
+ 
+-#if !defined(_ALLBSD_SOURCE) || defined(__APPLE__)
++#if (!defined(_ALLBSD_SOURCE) || defined(__APPLE__)) && !defined(ELF_ST_TYPE)
+ #define ELF_ST_TYPE ELF32_ST_TYPE
+ #endif
+ #endif
+diff --git a/src/java.base/unix/native/libjava/jni_util_md.c b/src/java.base/unix/native/libjava/jni_util_md.c
+index 32b477aa7..63eb0174f 100644
+--- a/src/java.base/unix/native/libjava/jni_util_md.c
++++ b/src/java.base/unix/native/libjava/jni_util_md.c
+@@ -31,7 +31,11 @@
+ #include "jni_util.h"
+ #include "dlfcn.h"
+ 
+-#if defined(LINUX) && (defined(_GNU_SOURCE) || \
++#if defined(__ANDROID__)
++/* bionic exports the POSIX strerror_r under its plain name; _GNU_SOURCE hides it */
++extern int jdk_posix_strerror_r(int, char *, size_t) __asm__("strerror_r");
++#define strerror_r(a, b, c) jdk_posix_strerror_r((a), (b), (c))
++#elif defined(LINUX) && (defined(_GNU_SOURCE) || \
+          (defined(_POSIX_C_SOURCE) && _POSIX_C_SOURCE < 200112L \
+              && defined(_XOPEN_SOURCE) && _XOPEN_SOURCE < 600))
+ extern int __xpg_strerror_r(int, char *, size_t);
+diff --git a/src/java.base/unix/native/libnet/net_util_md.h b/src/java.base/unix/native/libnet/net_util_md.h
+index 902cf9673..93d425e86 100644
+--- a/src/java.base/unix/native/libnet/net_util_md.h
++++ b/src/java.base/unix/native/libnet/net_util_md.h
+@@ -29,6 +29,7 @@
+ #include <netdb.h>
+ #include <poll.h>
+ #include <sys/socket.h>
++#include <netinet/in.h>
+ 
+ /************************************************************************
+  * Macros and constants

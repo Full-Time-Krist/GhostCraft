@@ -1,0 +1,4 @@
+/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a/CMakeFiles/ghostcraft.dir
+/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a/CMakeFiles/glfw.dir
+/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a/CMakeFiles/edit_cache.dir
+/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a/CMakeFiles/rebuild_cache.dir

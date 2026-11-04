@@ -1,0 +1,1 @@
+/home/Krist/Projects/GhostCraft/app/src/main/cpp/CMakeLists.txt

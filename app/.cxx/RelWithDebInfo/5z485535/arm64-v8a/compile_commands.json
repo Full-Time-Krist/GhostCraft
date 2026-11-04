@@ -1,0 +1,32 @@
+[
+{
+  "directory": "/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a",
+  "command": "/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android31 --sysroot=/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dghostcraft_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -Wall -Wextra -O2 -o CMakeFiles/ghostcraft.dir/launcher.c.o -c /home/Krist/Projects/GhostCraft/app/src/main/cpp/launcher.c",
+  "file": "/home/Krist/Projects/GhostCraft/app/src/main/cpp/launcher.c",
+  "output": "CMakeFiles/ghostcraft.dir/launcher.c.o"
+},
+{
+  "directory": "/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a",
+  "command": "/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android31 --sysroot=/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dglfw_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -Wall -Wextra -O2 -fvisibility=hidden -o CMakeFiles/glfw.dir/glfw/init.c.o -c /home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/init.c",
+  "file": "/home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/init.c",
+  "output": "CMakeFiles/glfw.dir/glfw/init.c.o"
+},
+{
+  "directory": "/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a",
+  "command": "/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android31 --sysroot=/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dglfw_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -Wall -Wextra -O2 -fvisibility=hidden -o CMakeFiles/glfw.dir/glfw/window.c.o -c /home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/window.c",
+  "file": "/home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/window.c",
+  "output": "CMakeFiles/glfw.dir/glfw/window.c.o"
+},
+{
+  "directory": "/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a",
+  "command": "/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android31 --sysroot=/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dglfw_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -Wall -Wextra -O2 -fvisibility=hidden -o CMakeFiles/glfw.dir/glfw/input.c.o -c /home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/input.c",
+  "file": "/home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/input.c",
+  "output": "CMakeFiles/glfw.dir/glfw/input.c.o"
+},
+{
+  "directory": "/home/Krist/Projects/GhostCraft/app/.cxx/RelWithDebInfo/5z485535/arm64-v8a",
+  "command": "/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/bin/clang --target=aarch64-none-linux-android31 --sysroot=/home/Krist/.local/opt/android-sdk/ndk/29.0.14206865/toolchains/llvm/prebuilt/linux-x86_64/sysroot -Dglfw_EXPORTS -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -Wformat -Werror=format-security  -O2 -g -DNDEBUG -fPIC -Wall -Wextra -O2 -fvisibility=hidden -o CMakeFiles/glfw.dir/glfw/bridge.c.o -c /home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/bridge.c",
+  "file": "/home/Krist/Projects/GhostCraft/app/src/main/cpp/glfw/bridge.c",
+  "output": "CMakeFiles/glfw.dir/glfw/bridge.c.o"
+}
+]

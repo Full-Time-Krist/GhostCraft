@@ -1,0 +1,433 @@
+#!/usr/bin/env python3
+"""Sends Prism Launcher instances to GhostCraft on the phone.
+
+For each instance it resolves the launch recipe the way Prism does
+(mmc-pack.json components -> Prism meta JSON -> classpath, main class,
+arguments, asset index) and writes it as ghostcraft.json, so the phone never
+has to run mod loader installers or talk to Prism's meta server. Libraries
+and assets go to shared stores, game files to instances/<id>/minecraft.
+
+Only changed files travel: what was sent before is remembered per device in
+~/.cache/ghostcraft-sync. Files are packed into one tar, pushed and unpacked
+on the phone, which is much faster than adb push for thousands of assets.
+
+  ghostcraft-sync list
+  ghostcraft-sync push "NeoForge-1.21.1" [--saves] [--no-assets] [--stage DIR]
+  ghostcraft-sync runtime             # our Android builds of Java/LWJGL/Mesa
+"""
+import argparse
+import hashlib
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from pathlib import Path
+
+PRISM = Path(os.environ.get("PRISM_DIR", Path.home() / ".local/share/PrismLauncher"))
+ADB = os.environ.get("ADB", str(Path.home() / ".local/opt/platform-tools/adb"))
+PACKAGE = "dev.krist.ghostcraft"
+DEST = f"/sdcard/Android/data/{PACKAGE}/files"
+CACHE = Path.home() / ".cache/ghostcraft-sync"
+# Output of runtime/*/build.sh: out/jdk21 -> runtime/jre-21 on the phone
+BUILD_OUT = Path(os.environ.get("GHOSTCRAFT_BUILD", Path.home() / "Projects/GhostCraft-build")) / "out"
+RUNTIMES = {"jdk21": "jre-21", "lwjgl": "lwjgl", "mesa": "mesa"}
+FORMAT = 1
+
+# Never leaves the PC: accounts, logs, caches, backups Prism or mods make
+SKIP_TOP = {
+    "_IAS_ACCOUNTS_DO_NOT_SEND_TO_ANYONE", "logs", "crash-reports", "cache",
+    "screenshots", "backups", "downloads", "mods_removed", "essential",
+    ".fabric", ".mixin.out", "local",
+}
+SKIP_TOP_RE = re.compile(r"^(mods-backup-.*|.*\.log|.*\.bak|.*\.so|.*\.dll|.*\.dylib)$")
+
+
+# ---------- Prism instance and meta ----------
+
+def read_cfg(path: Path) -> dict:
+    cfg = {}
+    if path.is_file():
+        for line in path.read_text(errors="replace").splitlines():
+            if "=" in line and not line.startswith("["):
+                k, v = line.split("=", 1)
+                cfg[k.strip()] = v.strip()
+    return cfg
+
+
+def instances() -> list[Path]:
+    root = PRISM / "instances"
+    return sorted(p for p in root.iterdir() if (p / "mmc-pack.json").is_file())
+
+
+def find_instance(name: str) -> Path:
+    for inst in instances():
+        if name in (inst.name, read_cfg(inst / "instance.cfg").get("name")):
+            return inst
+    sys.exit(f"Инстанс «{name}» не найден. Список: ghostcraft-sync list")
+
+
+def meta(uid: str, version: str) -> dict:
+    path = PRISM / "meta" / uid / f"{version}.json"
+    if not path.is_file():
+        sys.exit(f"Нет {path}: запусти инстанс один раз в Prism, чтобы он скачал метаданные")
+    return json.loads(path.read_text())
+
+
+def maven_path(name: str) -> str:
+    """group:artifact:version[:classifier][@ext] -> repository path"""
+    ext = "jar"
+    if "@" in name:
+        name, ext = name.split("@", 1)
+    parts = name.split(":")
+    group, artifact, version = parts[:3]
+    classifier = f"-{parts[3]}" if len(parts) > 3 else ""
+    return f"{group.replace('.', '/')}/{artifact}/{version}/{artifact}-{version}{classifier}.{ext}"
+
+
+def rules_allow(rules) -> bool:
+    """Mojang library rules, judged as Linux: closest to Android"""
+    if not rules:
+        return True
+    allowed = False
+    for rule in rules:
+        os_name = rule.get("os", {}).get("name")
+        if os_name is None or os_name == "linux":
+            allowed = rule["action"] == "allow"
+    return allowed
+
+
+def lib_path(lib: dict) -> str:
+    art = lib.get("downloads", {}).get("artifact", {})
+    return art.get("path") or maven_path(lib["name"])
+
+
+def resolve(inst: Path) -> dict:
+    pack = json.loads((inst / "mmc-pack.json").read_text())
+    cfg = read_cfg(inst / "instance.cfg")
+    comps = [(c, meta(c["uid"], c["version"])) for c in pack["components"]]
+    comps.sort(key=lambda cm: cm[1].get("order", 0))
+
+    recipe = {
+        "mainClass": None, "gameArgs": "", "jvmArgs": [], "tweakers": [],
+        "traits": [], "mainJar": None, "assetIndex": None, "javaMajor": None,
+    }
+    classpath, extra = [], []
+    native_names, lwjgl, loader, mc = set(), None, None, None
+    seen = {}
+
+    for comp, m in comps:
+        uid = m["uid"]
+        if uid == "net.minecraft":
+            mc = m["version"]
+            majors = m.get("compatibleJavaMajors") or [8]
+            recipe["javaMajor"] = max(majors)
+        elif uid in ("org.lwjgl", "org.lwjgl3"):
+            lwjgl = {"uid": uid, "version": m["version"]}
+        elif uid != "net.fabricmc.intermediary":
+            loader = {"uid": uid, "name": m.get("name", uid), "version": m["version"]}
+
+        if m.get("mainClass"):
+            recipe["mainClass"] = m["mainClass"]
+        if m.get("minecraftArguments"):
+            recipe["gameArgs"] = m["minecraftArguments"]
+        if m.get("assetIndex"):
+            recipe["assetIndex"] = m["assetIndex"]
+        if m.get("mainJar"):
+            recipe["mainJar"] = lib_path(m["mainJar"])
+        recipe["jvmArgs"] += m.get("+jvmArgs", [])
+        recipe["tweakers"] += m.get("+tweakers", [])
+        recipe["traits"] += m.get("+traits", [])
+
+        for lib in m.get("libraries", []):
+            if not rules_allow(lib.get("rules")):
+                continue
+            # Desktop natives are useless on ARM Android: GhostCraft brings
+            # its own arm64 builds of LWJGL and friends
+            if "natives" in lib or re.search(r":natives-", lib["name"]):
+                native_names.add(lib["name"])
+                continue
+            # A later component replaces an earlier version of the same library
+            key = ":".join(lib["name"].split(":")[:2] + lib["name"].split(":")[3:4])
+            path = lib_path(lib)
+            if key in seen:
+                classpath[seen[key]] = path
+            else:
+                seen[key] = len(classpath)
+                classpath.append(path)
+        for lib in m.get("mavenFiles", []):
+            extra.append(lib_path(lib))
+
+    if recipe["tweakers"]:
+        recipe["gameArgs"] += "".join(f" --tweakClass {t}" for t in recipe["tweakers"])
+
+    return {
+        "format": FORMAT,
+        "id": inst.name,
+        "name": cfg.get("name", inst.name),
+        "group": group_of(inst.name),
+        "minecraft": mc,
+        "loader": loader,
+        "lwjgl": lwjgl,
+        "memory": {"min": int(cfg.get("MinMemAlloc", 512)), "max": int(cfg.get("MaxMemAlloc", 2048))},
+        "jvmArgsUser": cfg.get("JvmArgs", ""),
+        "classpath": classpath,
+        "mavenFiles": extra,
+        "desktopNatives": sorted(native_names),
+        **recipe,
+    }
+
+
+def group_of(inst_name: str) -> str | None:
+    path = PRISM / "instances/instgroups.json"
+    if path.is_file():
+        for group, data in json.loads(path.read_text()).get("groups", {}).items():
+            if inst_name in data.get("instances", []):
+                return group
+    return None
+
+
+# ---------- What to send ----------
+
+def game_files(inst: Path, saves: bool):
+    game = inst / "minecraft" if (inst / "minecraft").is_dir() else inst / ".minecraft"
+    for top in game.iterdir():
+        if top.name in SKIP_TOP or SKIP_TOP_RE.match(top.name):
+            continue
+        if top.name == "saves" and not saves:
+            continue
+        if top.is_file():
+            yield top, f"instances/{inst.name}/minecraft/{top.name}"
+        else:
+            for f in top.rglob("*"):
+                if f.is_file():
+                    yield f, f"instances/{inst.name}/minecraft/{f.relative_to(game)}"
+
+
+def library_files(recipe: dict):
+    libs = PRISM / "libraries"
+    paths = set(recipe["classpath"] + recipe["mavenFiles"])
+    if recipe["mainJar"]:
+        paths.add(recipe["mainJar"])
+    # Forge/NeoForge installers (run through ForgeWrapper) write patched
+    # client jars next to the loader; send those so the phone skips installing
+    loader = recipe["loader"] or {}
+    mc = recipe["minecraft"]
+    generated = {
+        "net.neoforged": [f"net/neoforged/neoforge/{loader.get('version')}", f"net/minecraft/client/{mc}-"],
+        "net.minecraftforge": [f"net/minecraftforge/forge/{mc}-{loader.get('version')}", f"net/minecraft/client/{mc}-"],
+    }.get(loader.get("uid"), [])
+    for prefix in generated:
+        parent = libs / Path(prefix).parent
+        if parent.is_dir():
+            for f in parent.rglob("*"):
+                rel = str(f.relative_to(libs))
+                if f.is_file() and rel.startswith(prefix):
+                    paths.add(rel)
+    missing = []
+    for rel in sorted(paths):
+        f = libs / rel
+        if f.is_file():
+            yield f, f"libraries/{rel}"
+        else:
+            missing.append(rel)
+    if missing:
+        print(f"  ! нет в Prism ({len(missing)}), запусти инстанс на ПК хотя бы раз:")
+        for rel in missing[:10]:
+            print(f"    {rel}")
+
+
+def asset_files(recipe: dict):
+    index = recipe["assetIndex"]
+    if not index:
+        return
+    assets = PRISM / "assets"
+    idx = assets / "indexes" / f"{index['id']}.json"
+    if not idx.is_file():
+        print(f"  ! нет индекса ассетов {idx.name}")
+        return
+    yield idx, f"assets/indexes/{idx.name}"
+    for obj in json.loads(idx.read_text())["objects"].values():
+        h = obj["hash"]
+        f = assets / "objects" / h[:2] / h
+        if f.is_file():
+            yield f, f"assets/objects/{h[:2]}/{h}"
+
+
+def warnings(inst: Path, recipe: dict) -> list[str]:
+    out = []
+    game = inst / "minecraft"
+    for so in list(game.glob("*.so")) + list(game.glob("*.dll")):
+        out.append(f"{so.name}: нативная библиотека под ПК, на телефоне не загрузится")
+    if recipe["lwjgl"] and recipe["lwjgl"]["uid"] == "org.lwjgl":
+        out.append("LWJGL 2 (старые версии): нужен отдельный мост, см. docs/ROADMAP.md")
+    return out
+
+
+# ---------- Transfer ----------
+
+def adb(*args, capture=False):
+    res = subprocess.run([ADB, *args], check=True, text=True,
+                         capture_output=capture)
+    return res.stdout if capture else None
+
+
+def device_serial() -> str:
+    # The same phone may be listed twice (USB and Wi-Fi): ANDROID_SERIAL picks one
+    if os.environ.get("ANDROID_SERIAL"):
+        return os.environ["ANDROID_SERIAL"]
+    out = adb("devices", capture=True)
+    serials = [l.split()[0] for l in out.splitlines()[1:] if l.strip().endswith("device")]
+    if not serials:
+        sys.exit("Телефон не найден в adb devices. Подключи по USB/Wi-Fi или используй --stage DIR")
+    return serials[0]
+
+
+def ensure_app_dir(serial):
+    # Android/data/<package> has to be created by the system for the app; if adb
+    # creates it first it belongs to shell and the app can't read anything inside
+    def exists():
+        return adb("-s", serial, "shell", f"test -d {DEST} && echo y || true", capture=True).strip() == "y"
+    if exists():
+        return
+    if not adb("-s", serial, "shell", "pm", "path", PACKAGE, capture=True).strip():
+        sys.exit("Сначала установи GhostCraft на телефон")
+    adb("-s", serial, "shell", "am", "start", "-n", f"{PACKAGE}/.MainActivity", capture=True)
+    for _ in range(40):
+        if exists():
+            return
+        time.sleep(0.5)
+    sys.exit("GhostCraft не создал свою папку, открой приложение на телефоне вручную")
+
+
+def group_writable(info: tarfile.TarInfo) -> tarfile.TarInfo:
+    # Android/data is plain f2fs: shell and the app only share the ext_data_rw
+    # group, so the game can rewrite its configs only if the group may write
+    info.mode |= 0o060
+    return info
+
+
+def changed(files, state: dict):
+    for src, dest in files:
+        st = src.stat()
+        sig = f"{st.st_size}:{int(st.st_mtime)}"
+        if state.get(dest) != sig:
+            yield src, dest, sig
+
+
+def runtime_files():
+    found = False
+    for build, target in RUNTIMES.items():
+        root = BUILD_OUT / build
+        if not root.is_dir():
+            continue
+        found = True
+        print(f"• {build} → runtime/{target}")
+        for f in root.rglob("*"):
+            if f.is_file():
+                yield f, f"runtime/{target}/{f.relative_to(root)}"
+    if not found:
+        sys.exit(f"Нет собранного рантайма в {BUILD_OUT}: runtime/jdk/build.sh")
+
+
+def send(files, stage):
+    """Sends the (src, dest) pairs that changed since the last send to this device."""
+    serial = None if stage else device_serial()
+    state_file = CACHE / f"{serial or 'stage'}.json"
+    state = json.loads(state_file.read_text()) if state_file.is_file() else {}
+    todo = list(changed(files, state))
+    size = sum(src.stat().st_size for src, _, _ in todo)
+    print(f"К отправке: {len(todo)} файлов, {size / 2**20:.1f} МиБ (из {len(files)})")
+    if not todo:
+        return
+
+    if stage:
+        root = Path(stage)
+        for src, dest, _ in todo:
+            (root / dest).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, root / dest)
+    else:
+        # Streamed straight into tar on the phone: no temp copy of gigabytes.
+        # Not exec-in: it returns once the adb server has buffered the data, long
+        # before the phone has unpacked it; shell -T waits for tar to exit
+        ensure_app_dir(serial)
+        proc = subprocess.Popen([ADB, "-s", serial, "shell", "-T", f"tar -xf - -C {DEST}"],
+                                stdin=subprocess.PIPE)
+        with tarfile.open(fileobj=proc.stdin, mode="w|") as tar:
+            for src, dest, _ in todo:
+                tar.add(src, arcname=dest, filter=group_writable)
+        proc.stdin.close()
+        if proc.wait() != 0:
+            sys.exit("Распаковка на телефоне не удалась")
+        # Parent folders tar makes on its own get shell's umask (755): the app
+        # couldn't add its own downloads next to them (new instances, Modrinth)
+        adb("-s", serial, "shell",
+            f"find {DEST} -type d ! -perm -g+w -exec chmod g+rwxs {{}} + 2>/dev/null; true", capture=True)
+
+    for _, dest, sig in todo:
+        state[dest] = sig
+    CACHE.mkdir(parents=True, exist_ok=True)
+    state_file.write_text(json.dumps(state))
+    print("Готово" + (f": {stage}" if stage else ", открой GhostCraft на телефоне"))
+
+
+def push(names, saves, with_assets, stage):
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp = Path(tmp)
+        files, recipes = [], []
+        for name in names:
+            inst = find_instance(name)
+            recipe = resolve(inst)
+            recipe["warnings"] = warnings(inst, recipe)
+            recipe["syncedAt"] = int(time.time())
+            recipes.append(recipe)
+            print(f"• {recipe['name']}: Minecraft {recipe['minecraft']}"
+                  f"{' + ' + recipe['loader']['name'] + ' ' + recipe['loader']['version'] if recipe['loader'] else ''}"
+                  f", Java {recipe['javaMajor']}, {len(recipe['classpath'])} библиотек")
+            for w in recipe["warnings"]:
+                print(f"  ! {w}")
+            manifest = tmp / f"{inst.name}.ghostcraft.json"
+            manifest.write_text(json.dumps(recipe, ensure_ascii=False, indent=1))
+            files.append((manifest, f"instances/{inst.name}/ghostcraft.json"))
+            files += game_files(inst, saves)
+            files += library_files(recipe)
+            if with_assets:
+                files += asset_files(recipe)
+
+        send(files, stage)
+
+
+def main():
+    ap = argparse.ArgumentParser(description="Синхронизация инстансов Prism с GhostCraft")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("list", help="инстансы Prism")
+    p = sub.add_parser("push", help="отправить инстансы на телефон")
+    p.add_argument("names", nargs="+")
+    p.add_argument("--saves", action="store_true", help="вместе с мирами (перезапишет миры на телефоне)")
+    p.add_argument("--no-assets", action="store_true", help="без звуков и языков (~0.5–1 ГиБ)")
+    p.add_argument("--stage", metavar="DIR", help="собрать в папку на ПК вместо отправки")
+    p.add_argument("--forget", action="store_true", help="забыть, что уже отправлялось, и слать всё")
+    p = sub.add_parser("runtime", help="отправить собранные Java/LWJGL/Mesa")
+    p.add_argument("--stage", metavar="DIR", help="собрать в папку на ПК вместо отправки")
+    args = ap.parse_args()
+
+    if args.cmd == "list":
+        for inst in instances():
+            r = resolve(inst)
+            loader = f" + {r['loader']['name']} {r['loader']['version']}" if r["loader"] else ""
+            print(f"{inst.name:32} {r['minecraft']}{loader}")
+        return
+    if args.cmd == "runtime":
+        send(list(runtime_files()), args.stage)
+        return
+    if args.forget:
+        shutil.rmtree(CACHE, ignore_errors=True)
+    push(args.names, args.saves, not args.no_assets, args.stage)
+
+
+if __name__ == "__main__":
+    main()

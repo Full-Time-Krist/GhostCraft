@@ -1,0 +1,1 @@
+/home/Krist/Projects/GhostCraft/app/build/intermediates/cxx/RelWithDebInfo/5z485535/obj/arm64-v8a

@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Microsoft sign-in, Mojang and Modrinth downloads (stage 3) -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="GhostCraft"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:largeHeap="true"
+        android:allowNativeHeapPointerTagging="false"
+        android:theme="@style/GhostCraft">
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <!-- The JVM lives in its own process: one VM per process, and a crash
+             or System.exit() of the game leaves the launcher alive -->
+        <activity
+            android:name=".GameActivity"
+            android:process=":game"
+            android:exported="false"
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="stateAlwaysHidden|adjustNothing"
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden|keyboard|navigation|uiMode|smallestScreenSize|density" />
+    </application>
+</manifest>
